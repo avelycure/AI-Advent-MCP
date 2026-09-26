@@ -1,0 +1,19 @@
+{
+  "name": "day-16-mcp-connection",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Day 16: connect to an MCP server and list its tools",
+  "scripts": {
+    "start": "node src/client.js",
+    "server": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "^2.1.0",
+    "@modelcontextprotocol/server": "^2.1.0"
+  }
+}
