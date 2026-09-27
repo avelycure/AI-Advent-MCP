@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Days 16-17: MCP connection and GitHub repository statistics",
+  "description": "Days 16-18: MCP, GitHub statistics and persistent schedules",
   "scripts": {
     "start": "node src/client.js",
     "client": "node src/client.js",

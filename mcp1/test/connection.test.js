@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -12,8 +16,14 @@ import {
 const serverPath = fileURLToPath(new URL("../src/server.js", import.meta.url));
 
 function startServer() {
+  const stateDirectory = mkdtempSync(join(tmpdir(), "ai-advent-mcp-server-"));
   const serverProcess = spawn(process.execPath, [serverPath], {
-    env: { ...process.env, GITHUB_TOKEN: "test-token", MCP_PORT: "0" },
+    env: {
+      ...process.env,
+      GITHUB_TOKEN: "test-token",
+      MCP_PORT: "0",
+      MCP_STATE_FILE: join(stateDirectory, "state.json"),
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -35,11 +45,11 @@ function startServer() {
     });
   });
 
-  return { serverProcess, serverUrl };
+  return { serverProcess, serverUrl, stateDirectory };
 }
 
 test("connects to a separately running MCP server and receives its tools", async () => {
-  const { serverProcess, serverUrl } = startServer();
+  const { serverProcess, serverUrl, stateDirectory } = startServer();
   const client = new Client({ name: "integration-test-client", version: "1.0.0" });
 
   try {
@@ -48,10 +58,15 @@ test("connects to a separately running MCP server and receives its tools", async
 
     const { tools } = await client.listTools();
 
-    assert.equal(tools.length, 2);
+    assert.equal(tools.length, 4);
     assert.deepEqual(
       tools.map((tool) => tool.name),
-      ["hello", "github_repository_stats"],
+      [
+        "hello",
+        "github_repository_stats",
+        "github_stats_schedule_upsert",
+        "github_stats_summary",
+      ],
     );
     assert.equal(
       tools[0].description,
@@ -62,6 +77,11 @@ test("connects to a separately running MCP server and receives its tools", async
     assert.equal(greeting.content[0].text, "Hello from MCP!");
   } finally {
     await client.close();
-    serverProcess.kill("SIGTERM");
+    if (serverProcess.exitCode === null) {
+      const exited = once(serverProcess, "exit");
+      serverProcess.kill("SIGTERM");
+      await exited;
+    }
+    rmSync(stateDirectory, { recursive: true, force: true });
   }
 });

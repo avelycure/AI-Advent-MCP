@@ -12,6 +12,14 @@ export class GitHubApiError extends Error {
   }
 }
 
+export function formatGitHubError(error) {
+  if (error instanceof GitHubApiError) return error.message;
+  if (error instanceof Error && error.name === "AbortError") {
+    return "GitHub API request was cancelled.";
+  }
+  return "GitHub API request failed.";
+}
+
 function nextPage(linkHeader) {
   if (!linkHeader) return null;
 
@@ -229,4 +237,11 @@ export async function collectRepositoryStats({
     topRepositories: topRepositories(repositories, top),
     rateLimit: fetched.rateLimit,
   };
+}
+
+export function collectRepositoryStatsWithAuth(githubAuth, options = {}) {
+  return collectRepositoryStats({
+    ...options,
+    token: githubAuth,
+  });
 }
