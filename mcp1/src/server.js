@@ -1,42 +1,35 @@
 import { createServer } from "node:http";
+import { fileURLToPath } from "node:url";
 
 import {
   localhostHostValidation,
   localhostOriginValidation,
   toNodeHandler,
 } from "@modelcontextprotocol/node";
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import { createMcpHandler } from "@modelcontextprotocol/server";
+import { config as loadEnvironment } from "dotenv";
 
-const host = process.env.MCP_HOST ?? "127.0.0.1";
+import { buildMcpServer } from "./mcp.js";
+
+loadEnvironment({
+  path: fileURLToPath(new URL("../../secrets/.env", import.meta.url)),
+  quiet: true,
+});
+
+const host = "127.0.0.1";
 const port = Number.parseInt(process.env.MCP_PORT ?? "3000", 10);
 
 if (!Number.isInteger(port) || port < 0 || port > 65_535) {
   throw new Error(`Invalid MCP_PORT: ${process.env.MCP_PORT}`);
 }
 
-const mcpHandler = createMcpHandler(() => {
-  const server = new McpServer({
-    name: "day-16-demo-server",
-    version: "1.0.0",
-  });
+if (!process.env.GITHUB_TOKEN) {
+  throw new Error("GITHUB_TOKEN is missing in secrets/.env");
+}
 
-  server.registerTool(
-    "hello",
-    {
-      description: "Returns a greeting from the demo MCP server",
-    },
-    async () => ({
-      content: [
-        {
-          type: "text",
-          text: "Hello from MCP!",
-        },
-      ],
-    }),
-  );
-
-  return server;
-});
+const mcpHandler = createMcpHandler(() => buildMcpServer({
+  githubAuth: process.env.GITHUB_TOKEN,
+}));
 
 const nodeHandler = toNodeHandler(mcpHandler);
 const validateHost = localhostHostValidation();

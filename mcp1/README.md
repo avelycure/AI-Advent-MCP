@@ -1,25 +1,42 @@
-# День 16. Подключение MCP
+# Дни 16–17. MCP-клиент и сервер вокруг GitHub API
 
-Минимальный пример на Node.js с раздельно запущенными процессами:
+Это единый учебный проект для двух последовательных заданий:
 
-- `src/server.js` поднимает MCP-сервер на `http://127.0.0.1:3000/mcp` и публикует инструмент `hello`;
-- `src/client.js` подключается к серверу по Streamable HTTP и получает список инструментов через `listTools()`;
-- `test/connection.test.js` автоматически запускает сервер отдельным процессом и проверяет соединение.
+- MCP-сервер на `http://127.0.0.1:3000/mcp`;
+- MCP-клиент, который получает список инструментов через `listTools()` и
+  вызывает выбранный инструмент через `callTool()`;
+- простой инструмент `hello` из дня 16;
+- read-only инструмент `github_repository_stats` из дня 17.
 
-## Установка
+GitHub-инструмент обходит через REST API все репозитории, доступные токену, и
+возвращает агрегированную статистику: количество репозиториев, звёзды, форки,
+открытые issue/PR, основные языки и небольшой top-N.
 
-Требуется Node.js 20 или новее.
+## Установка и токен
+
+Требуется Node.js 20.3 или новее.
 
 ```bash
 cd mcp1
 npm install
+cp ../secrets/keys.example ../secrets/.env
+chmod 600 ../secrets/.env
 ```
 
-## Запуск сервера
+Впишите токен в `../secrets/.env`:
+
+```dotenv
+GITHUB_TOKEN=github_pat_...
+```
+
+Файл `secrets/.env` исключён из Git.
+
+## Раздельный запуск сервера и клиента
 
 В первом терминале:
 
 ```bash
+cd mcp1
 npm run server
 ```
 
@@ -29,46 +46,46 @@ npm run server
 MCP server listening on http://127.0.0.1:3000/mcp
 ```
 
-## Запуск клиента
-
-Во втором терминале, также из папки `mcp1`:
+Во втором терминале:
 
 ```bash
-npm run client
+cd mcp1
+npm run client -- --list
 ```
 
-Команда `npm start` делает то же самое.
+В поле `tools` должны быть два инструмента: `hello` и
+`github_repository_stats`.
 
-Ожидаемый результат:
-
-```text
-MCP connection established: http://127.0.0.1:3000/mcp
-
-Available tools (1):
-[
-  {
-    "name": "hello",
-    "description": "Returns a greeting from the demo MCP server",
-    "inputSchema": {
-      "type": "object",
-      "properties": {}
-    }
-  }
-]
-```
-
-Адрес можно изменить переменными окружения:
+Вызов GitHub-инструмента:
 
 ```bash
-MCP_PORT=4000 npm run server
-MCP_URL=http://127.0.0.1:4000/mcp npm run client
+npm run client -- \
+  --tool github_repository_stats \
+  --arguments '{"visibility":"all","top":3}'
 ```
 
-## Автоматическая проверка
+Команда `npm start` запускает клиент. Сервер должен быть уже запущен отдельной
+командой `npm run server`.
+
+## Входные параметры GitHub-инструмента
+
+- `visibility`: `all`, `public` или `private`;
+- `affiliations`: `owner`, `collaborator`, `organization_member`;
+- `includeForks`: учитывать форки;
+- `includeArchived`: учитывать архивные репозитории;
+- `top`: размер списка лидеров, от 1 до 20.
+
+Важно: при `visibility: "all"` агрегаты приватных репозиториев и обезличенные
+строки top-N попадут в ответ инструмента. Если агент использует внешнюю LLM, эти
+данные будут отправлены её провайдеру. Для анализа только открытых данных
+задайте `visibility: "public"`.
+
+## Проверка
 
 ```bash
 npm test
 ```
 
-Тест считается успешным, если отдельный серверный процесс запущен, клиент
-подключился к нему и получил инструмент `hello`.
+Тесты запускают настоящий MCP client/server transport, проверяют оба
+инструмента, пагинацию GitHub и защиту токена. GitHub API в тестах подменён,
+поэтому сеть и настоящий токен не нужны.

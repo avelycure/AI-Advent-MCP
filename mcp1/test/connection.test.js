@@ -13,7 +13,7 @@ const serverPath = fileURLToPath(new URL("../src/server.js", import.meta.url));
 
 function startServer() {
   const serverProcess = spawn(process.execPath, [serverPath], {
-    env: { ...process.env, MCP_PORT: "0" },
+    env: { ...process.env, GITHUB_TOKEN: "test-token", MCP_PORT: "0" },
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -40,7 +40,7 @@ function startServer() {
 
 test("connects to a separately running MCP server and receives its tools", async () => {
   const { serverProcess, serverUrl } = startServer();
-  const client = new Client({ name: "day-16-test-client", version: "1.0.0" });
+  const client = new Client({ name: "integration-test-client", version: "1.0.0" });
 
   try {
     const url = await serverUrl;
@@ -48,12 +48,18 @@ test("connects to a separately running MCP server and receives its tools", async
 
     const { tools } = await client.listTools();
 
-    assert.equal(tools.length, 1);
-    assert.equal(tools[0].name, "hello");
+    assert.equal(tools.length, 2);
+    assert.deepEqual(
+      tools.map((tool) => tool.name),
+      ["hello", "github_repository_stats"],
+    );
     assert.equal(
       tools[0].description,
       "Returns a greeting from the demo MCP server",
     );
+
+    const greeting = await client.callTool({ name: "hello", arguments: {} });
+    assert.equal(greeting.content[0].text, "Hello from MCP!");
   } finally {
     await client.close();
     serverProcess.kill("SIGTERM");
