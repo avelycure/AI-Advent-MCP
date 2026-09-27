@@ -6,6 +6,7 @@
   "description": "Day 16: connect to an MCP server and list its tools",
   "scripts": {
     "start": "node src/client.js",
+    "client": "node src/client.js",
     "server": "node src/server.js",
     "test": "node --test"
   },
@@ -14,6 +15,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/client": "^2.1.0",
+    "@modelcontextprotocol/node": "^2.1.0",
     "@modelcontextprotocol/server": "^2.1.0"
   }
 }

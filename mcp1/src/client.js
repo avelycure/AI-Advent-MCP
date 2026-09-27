@@ -1,22 +1,21 @@
-import { fileURLToPath } from "node:url";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-
-const serverPath = fileURLToPath(new URL("./server.js", import.meta.url));
+const serverUrl = new URL(
+  process.env.MCP_URL ?? "http://127.0.0.1:3000/mcp",
+);
 const client = new Client({
   name: "day-16-demo-client",
   version: "1.0.0",
 });
 
 try {
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [serverPath],
-  });
+  const transport = new StreamableHTTPClientTransport(serverUrl);
 
   await client.connect(transport);
-  console.log("MCP connection established successfully.\n");
+  console.log(`MCP connection established: ${serverUrl}\n`);
 
   const { tools } = await client.listTools();
 
@@ -28,6 +27,7 @@ try {
   }
 } catch (error) {
   console.error("MCP check failed:", error);
+  console.error("Start the server first with: npm run server");
   process.exitCode = 1;
 } finally {
   await client.close();
