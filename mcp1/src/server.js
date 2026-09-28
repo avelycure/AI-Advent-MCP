@@ -40,6 +40,9 @@ if (!githubAuthentication()) {
 const schedulerFile = process.env.MCP_STATE_FILE
   ? resolve(process.env.MCP_STATE_FILE)
   : fileURLToPath(new URL("../data/github-stats-scheduler.json", import.meta.url));
+const outputDirectory = process.env.MCP_OUTPUT_DIR
+  ? resolve(process.env.MCP_OUTPUT_DIR)
+  : fileURLToPath(new URL("../reports", import.meta.url));
 const scheduler = new GitHubStatsScheduler({
   storePath: schedulerFile,
   collectStats: (parameters, { signal }) => collectRepositoryStatsWithAuth(
@@ -57,6 +60,7 @@ await scheduler.start();
 const mcpHandler = createMcpHandler(() => buildMcpServer({
   githubAuth: githubAuthentication(),
   scheduler,
+  outputDirectory,
 }));
 
 const nodeHandler = toNodeHandler(mcpHandler);

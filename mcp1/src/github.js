@@ -3,6 +3,9 @@ const API_VERSION = "2026-03-10";
 const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
 const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_DESCRIPTION_LENGTH = 500;
+const PUBLIC_SEARCH_SUFFIX = " is:public";
+export const MAX_SEARCH_QUERY_LENGTH = 256 - PUBLIC_SEARCH_SUFFIX.length;
 
 export class GitHubApiError extends Error {
   constructor(message, status) {
@@ -62,6 +65,73 @@ function apiError(response) {
     `GitHub API request failed with HTTP ${response.status}.`,
     response.status,
   );
+}
+
+function compactText(value, maximumLength) {
+  if (typeof value !== "string") return null;
+  return value.replace(/\s+/g, " ").trim().slice(0, maximumLength) || null;
+}
+
+export async function searchRepositories({
+  query,
+  limit = 5,
+  fetchImpl = globalThis.fetch,
+  apiUrl = process.env.GITHUB_API_URL || DEFAULT_API_URL,
+  signal,
+} = {}) {
+  if (
+    typeof query !== "string"
+    || query.length === 0
+    || query.length > MAX_SEARCH_QUERY_LENGTH
+  ) {
+    throw new TypeError(
+      `query must contain between 1 and ${MAX_SEARCH_QUERY_LENGTH} characters`,
+    );
+  }
+
+  const url = new URL("/search/repositories", apiUrl);
+  url.searchParams.set("q", `${query}${PUBLIC_SEARCH_SUFFIX}`);
+  url.searchParams.set("per_page", String(limit));
+  url.searchParams.set("sort", "stars");
+  url.searchParams.set("order", "desc");
+  const requestSignal = signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+    : AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const response = await fetchImpl(url, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "ai-advent-github-mcp",
+      "X-GitHub-Api-Version": API_VERSION,
+    },
+    signal: requestSignal,
+  });
+  if (!response.ok) throw apiError(response);
+
+  const payload = await response.json();
+  if (!payload || !Array.isArray(payload.items)) {
+    throw new GitHubApiError("GitHub returned an unexpected response.", 502);
+  }
+
+  return {
+    query,
+    searchedAt: new Date().toISOString(),
+    totalCount: Math.max(0, Number(payload.total_count) || 0),
+    items: payload.items
+      .filter((item) => item?.private === false)
+      .slice(0, limit)
+      .map((item) => ({
+        fullName: compactText(item.full_name, 200) || "unknown/repository",
+        description: compactText(item.description, MAX_DESCRIPTION_LENGTH),
+        url: typeof item.html_url === "string"
+          && item.html_url.startsWith("https://github.com/")
+          ? item.html_url
+          : "https://github.com/",
+        language: compactText(item.language, 100),
+        stars: Math.max(0, Number(item.stargazers_count) || 0),
+        forks: Math.max(0, Number(item.forks_count) || 0),
+        updatedAt: typeof item.updated_at === "string" ? item.updated_at : null,
+      })),
+  };
 }
 
 async function fetchRepositories({

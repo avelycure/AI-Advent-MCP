@@ -23,6 +23,7 @@ function startServer() {
       GITHUB_TOKEN: "test-token",
       MCP_PORT: "0",
       MCP_STATE_FILE: join(stateDirectory, "state.json"),
+      MCP_OUTPUT_DIR: join(stateDirectory, "reports"),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -58,7 +59,7 @@ test("connects to a separately running MCP server and receives its tools", async
 
     const { tools } = await client.listTools();
 
-    assert.equal(tools.length, 4);
+    assert.equal(tools.length, 8);
     assert.deepEqual(
       tools.map((tool) => tool.name),
       [
@@ -66,6 +67,10 @@ test("connects to a separately running MCP server and receives its tools", async
         "github_repository_stats",
         "github_stats_schedule_upsert",
         "github_stats_summary",
+        "search",
+        "summarize",
+        "save_to_file",
+        "search_summary_pipeline",
       ],
     );
     assert.equal(

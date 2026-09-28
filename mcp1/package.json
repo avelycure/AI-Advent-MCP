@@ -3,10 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Days 16-18: MCP, GitHub statistics and persistent schedules",
+  "description": "Days 16-19: MCP, GitHub statistics, schedules and tool composition",
   "scripts": {
     "start": "node src/client.js",
     "client": "node src/client.js",
+    "pipeline": "node src/pipeline-cli.js",
     "server": "node src/server.js",
     "test": "node --test"
   },

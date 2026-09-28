@@ -1,7 +1,22 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
-import { collectRepositoryStats, formatGitHubError } from "./github.js";
+import {
+  collectRepositoryStats,
+  formatGitHubError,
+  MAX_SEARCH_QUERY_LENGTH,
+  searchRepositories,
+} from "./github.js";
+import {
+  MAX_SEARCH_RESULTS,
+  MAX_SUMMARY_BYTES,
+  PipelineStageError,
+  REPORT_FILE_PATTERN,
+  ReportAlreadyExistsError,
+  runSearchSummaryPipeline,
+  saveToFile,
+  summarizeSearchResults,
+} from "./pipeline.js";
 import {
   MAX_INTERVAL_MINUTES,
   MIN_INTERVAL_MINUTES,
@@ -13,6 +28,10 @@ export const HELLO_TOOL_NAME = "hello";
 export const GITHUB_TOOL_NAME = "github_repository_stats";
 export const SCHEDULE_UPSERT_TOOL_NAME = "github_stats_schedule_upsert";
 export const SUMMARY_TOOL_NAME = "github_stats_summary";
+export const SEARCH_TOOL_NAME = "search";
+export const SUMMARIZE_TOOL_NAME = "summarize";
+export const SAVE_TO_FILE_TOOL_NAME = "save_to_file";
+export const PIPELINE_TOOL_NAME = "search_summary_pipeline";
 
 const visibility = z
   .enum(["all", "public", "private"])
@@ -55,6 +74,54 @@ const statsInputShape = {
     .describe("Number of repositories to include in the compact top list."),
 };
 
+const searchInputShape = {
+  query: z
+    .string()
+    .trim()
+    .min(1)
+    .max(MAX_SEARCH_QUERY_LENGTH)
+    .describe("GitHub repository search query."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_SEARCH_RESULTS)
+    .default(5)
+    .describe("Maximum number of compact repository results."),
+};
+
+const searchItemSchema = z.object({
+  fullName: z.string().min(1).max(200),
+  description: z.string().max(500).nullable(),
+  url: z.string().url().max(2_048),
+  language: z.string().max(100).nullable(),
+  stars: z.number().nonnegative(),
+  forks: z.number().nonnegative(),
+  updatedAt: z.string().max(64).nullable(),
+});
+
+const searchResultSchema = z.object({
+  query: z.string().min(1).max(MAX_SEARCH_QUERY_LENGTH),
+  searchedAt: z.string().min(1).max(64),
+  totalCount: z.number().int().nonnegative(),
+  items: z.array(searchItemSchema).max(MAX_SEARCH_RESULTS),
+});
+
+const fileNameSchema = z
+  .string()
+  .regex(
+    REPORT_FILE_PATTERN,
+    "Use a simple .md or .txt file name without directories.",
+  );
+
+const fileContentSchema = z
+  .string()
+  .max(MAX_SUMMARY_BYTES)
+  .refine(
+    (value) => Buffer.byteLength(value, "utf8") <= MAX_SUMMARY_BYTES,
+    `Content must not exceed ${MAX_SUMMARY_BYTES} UTF-8 bytes.`,
+  );
+
 function errorResult(message) {
   return {
     isError: true,
@@ -62,11 +129,47 @@ function errorResult(message) {
   };
 }
 
+function successResult(result) {
+  return {
+    content: [{ type: "text", text: JSON.stringify(result) }],
+    structuredContent: result,
+  };
+}
+
+function formatSaveError(error) {
+  if (error instanceof ReportAlreadyExistsError) return error.message;
+  if (error instanceof RangeError || error instanceof TypeError) {
+    return error.message;
+  }
+  return "Unable to save the report.";
+}
+
+function formatPipelineError(error) {
+  if (!(error instanceof PipelineStageError)) {
+    return "Pipeline failed.";
+  }
+
+  let detail;
+  if (error.stage === SEARCH_TOOL_NAME) {
+    detail = formatGitHubError(error.cause);
+  } else if (error.stage === SAVE_TO_FILE_TOOL_NAME) {
+    detail = formatSaveError(error.cause);
+  } else {
+    detail = "Unable to summarize the search results.";
+  }
+  return `Pipeline failed at ${error.stage}: ${detail}`;
+}
+
 export function buildMcpServer({
   githubAuth,
   fetchImpl = globalThis.fetch,
   apiUrl = process.env.GITHUB_API_URL,
   scheduler,
+  outputDirectory,
+  searchImpl = searchRepositories,
+  summarizeImpl = summarizeSearchResults,
+  saveImpl = saveToFile,
+  pipelineLogger = console,
 } = {}) {
   const server = new McpServer({
     name: "ai-advent-mcp-server",
@@ -220,6 +323,148 @@ export function buildMcpServer({
           return errorResult(error.message);
         }
         return errorResult("Unable to read the GitHub statistics schedule.");
+      }
+    },
+  );
+
+  const search = ({ query, limit, signal }) => searchImpl({
+    token: githubAuth,
+    query,
+    limit,
+    fetchImpl,
+    apiUrl,
+    signal,
+  });
+  const summarize = async ({ searchResult }) => summarizeImpl(searchResult);
+  const save = ({ fileName, content, overwrite }) => saveImpl({
+    outputDirectory,
+    fileName,
+    content,
+    overwrite,
+  });
+
+  server.registerTool(
+    SEARCH_TOOL_NAME,
+    {
+      title: "Search GitHub repositories",
+      description: (
+        "Search public GitHub repositories and return a compact structured "
+        + "result for the next pipeline stage."
+      ),
+      inputSchema: z.object(searchInputShape),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (arguments_, context) => {
+      try {
+        return successResult(await search({
+          ...arguments_,
+          signal: context.mcpReq.signal,
+        }));
+      } catch (error) {
+        return errorResult(formatGitHubError(error));
+      }
+    },
+  );
+
+  server.registerTool(
+    SUMMARIZE_TOOL_NAME,
+    {
+      title: "Summarize repository search results",
+      description: (
+        "Turn the structured output of search into deterministic Markdown "
+        + "without calling another external service."
+      ),
+      inputSchema: z.object({ searchResult: searchResultSchema }),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (arguments_) => {
+      try {
+        return successResult(await summarize(arguments_));
+      } catch {
+        return errorResult("Unable to summarize the search results.");
+      }
+    },
+  );
+
+  server.registerTool(
+    SAVE_TO_FILE_TOOL_NAME,
+    {
+      title: "Save pipeline output to a file",
+      description: (
+        "Atomically save text to a simple .md or .txt file in the server's "
+        + "configured reports directory."
+      ),
+      inputSchema: z.object({
+        fileName: fileNameSchema,
+        content: fileContentSchema,
+        overwrite: z.boolean().default(false),
+      }),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (arguments_) => {
+      try {
+        return successResult(await save(arguments_));
+      } catch (error) {
+        return errorResult(formatSaveError(error));
+      }
+    },
+  );
+
+  server.registerTool(
+    PIPELINE_TOOL_NAME,
+    {
+      title: "Search, summarize and save",
+      description: (
+        "Automatically execute search -> summarize -> save_to_file and "
+        + "return the output and handoff metadata from every stage."
+      ),
+      inputSchema: z.object({
+        ...searchInputShape,
+        fileName: fileNameSchema,
+        overwrite: z.boolean().default(false),
+        trace: z
+          .boolean()
+          .default(false)
+          .describe("Print every pipeline handoff in the MCP server terminal."),
+      }),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (arguments_, context) => {
+      try {
+        const result = await runSearchSummaryPipeline(arguments_, {
+          search,
+          summarize,
+          save,
+          signal: context.mcpReq.signal,
+          onTrace: arguments_.trace
+            ? (stage, payload) => pipelineLogger.log(
+              `\n[Day 19 pipeline] INPUT -> ${stage}\n${JSON.stringify(payload, null, 2)}`,
+            )
+            : undefined,
+        });
+        return successResult(result);
+      } catch (error) {
+        return errorResult(formatPipelineError(error));
       }
     },
   );

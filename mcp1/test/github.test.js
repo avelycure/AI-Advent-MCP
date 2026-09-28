@@ -68,7 +68,7 @@ test("MCP tool describes its input and returns paginated GitHub statistics", asy
     await client.connect(clientTransport);
 
     const listed = await client.listTools();
-    assert.equal(listed.tools.length, 4);
+    assert.equal(listed.tools.length, 8);
     const githubTool = listed.tools.find(
       (tool) => tool.name === GITHUB_TOOL_NAME,
     );
