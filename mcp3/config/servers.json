@@ -1,0 +1,10 @@
+[
+  {
+    "id": "catalog",
+    "url": "http://127.0.0.1:3102/mcp"
+  },
+  {
+    "id": "planning",
+    "url": "http://127.0.0.1:3103/mcp"
+  }
+]
